@@ -86,5 +86,5 @@ if extra_attacks != 0: #If terrain_bonus were 0, multiplying by half of it would
 	force *= (1.2 * extra_attacks)
 
 print("\n*************************\n")
-print("Base Unit Force: " + force)
+print("Base Unit Force: " + str(force))
 print("\n*************************\n")
