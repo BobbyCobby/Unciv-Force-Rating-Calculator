@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
-
 """
-Test harness: downloads Unciv Units.json (Vanilla) at the requested commit and the
-docs/Other/Force-rating-calculation.md file, computes base unit forces using the
-parser, and compares with the expected values in the markdown.
+Test harness: downloads multiple Unciv Units.json (Vanilla + Gods & Kings) at the
+requested commit and the docs/Other/Force-rating-calculation.md file, computes base
+unit forces using the parser, and compares with the expected values in the markdown.
 
-This version is tolerant of // and /* */ comments and trailing commas in the
-Units.json file (Unciv stores JSON with comments).
+This merged approach finds more units and uses whichever file contains the unit.
 """
 import json
 import re
@@ -15,32 +13,27 @@ from urllib.error import HTTPError, URLError
 from main import compute_base_force
 from uniques_parser import parse_unit_modifiers
 
-# Use the commit the user specified earlier
 COMMIT = "b57046317937f566c5b4d9c2d2c317183bc60c9f"
-UNITS_RAW = f"https://raw.githubusercontent.com/yairm210/Unciv/{COMMIT}/android/assets/jsons/Civ%20V%20-%20Vanilla/Units.json"
+
+UNITS_URLS = [
+    f"https://raw.githubusercontent.com/yairm210/Unciv/{COMMIT}/android/assets/jsons/Civ%20V%20-%20Vanilla/Units.json",
+    f"https://raw.githubusercontent.com/yairm210/Unciv/{COMMIT}/android/assets/jsons/Civ%20V%20-%20Gods%20%26%20Kings/Units.json"
+]
+
 MD_RAW = f"https://raw.githubusercontent.com/yairm210/Unciv/{COMMIT}/docs/Other/Force-rating-calculation.md"
 
 def fetch_text(url, timeout=30):
     req = Request(url, headers={"User-Agent": "uncliv-test/1.0"})
-    try:
-        with urlopen(req, timeout=timeout) as r:
-            raw = r.read()
-            text = raw.decode('utf-8', errors='replace')
-            # quick sanity: if this looks like HTML, surface a clearer error
-            if '<html' in text.lower()[:200]:
-                raise RuntimeError(f"Fetched content seems to be HTML (possible 404 or rate-limit). URL: {url}")
-            return text
-    except HTTPError as e:
-        raise RuntimeError(f"HTTP error fetching {url}: {e.code} {e.reason}")
-    except URLError as e:
-        raise RuntimeError(f"URL error fetching {url}: {e}")
+    with urlopen(req, timeout=timeout) as r:
+        raw = r.read()
+        text = raw.decode('utf-8', errors='replace')
+        if '<html' in text.lower()[:200]:
+            raise RuntimeError(f"Fetched content seems to be HTML (possible 404 or rate-limit). URL: {url}")
+        return text
 
 def strip_js_comments_and_trailing_commas(s):
-    # Remove block comments /* ... */
     s = re.sub(r'/\*.*?\*/', '', s, flags=re.S)
-    # Remove line comments //...
     s = re.sub(r'//.*', '', s)
-    # Remove trailing commas before } or ]
     s = re.sub(r',\s*(\}|\])', r'\1', s)
     return s
 
@@ -50,9 +43,23 @@ def fetch_json(url):
     try:
         return json.loads(cleaned)
     except json.JSONDecodeError as e:
-        # Dump a helpful snippet for debugging
         snippet = cleaned[:600].replace('\n', '\\n')
-        raise RuntimeError(f"JSON decode failed for {url}: {e}\nCleaned content (first 600 chars): {snippet}")
+        raise RuntimeError(f"JSON decode failed for {url}: {e}\nCleaned snippet: {snippet}")
+
+def load_all_units(urls):
+    all_units = []
+    for u in urls:
+        try:
+            data = fetch_json(u)
+            print(f"Loaded {len(data)} units from {u}")
+            all_units.extend(data)
+        except Exception as e:
+            print(f"Warning: failed to load {u}: {e}")
+    # Build a mapping of name -> unit; prefer later files (Gods & Kings) to override Vanilla if needed
+    mapping = {}
+    for unit in all_units:
+        mapping[unit.get('name')] = unit
+    return mapping
 
 def parse_expected(md_text):
     results = {}
@@ -98,26 +105,19 @@ def compute_for_unit(u):
     )
 
 def main():
-    print("Fetching Units.json...", flush=True)
-    units = fetch_json(UNITS_RAW)
-    print(f"Loaded {len(units)} unit entries.", flush=True)
-
-    print("Fetching Force-rating md...", flush=True)
+    mapping = load_all_units(UNITS_URLS)
     md = fetch_text(MD_RAW)
     expected = parse_expected(md)
-
-    mapping = {u.get('name'): u for u in units}
 
     results = []
     for name, expected_val in expected.items():
         unit = mapping.get(name)
         if not unit:
-            results.append((name, expected_val, None, 'unit not found in Units.json'))
+            results.append((name, expected_val, None, 'unit not found in merged Units.jsons'))
             continue
         computed = compute_for_unit(unit)
         results.append((name, expected_val, computed, computed - expected_val))
 
-    # Print a report
     print("{:40s} {:>8s} {:>12s} {:>10s}".format("Unit", "Expected", "Computed", "Delta"))
     print("-" * 75)
     for r in results:
