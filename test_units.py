@@ -63,7 +63,7 @@ def compute_for_unit_with_breakdown(u):
     movement = u.get('movement', 2)
     strength = u.get('strength', 0)
     ranged = u.get('rangedStrength', 0)
-    is_nuke = (name.lower().find('atomic') >= 0 or name.lower().find('nuclear') >= 0)
+    is_nuke = name.strip().lower() in {'atomic bomb', 'nuclear missile'}
 
     parsed = parse_unit_modifiers(u)
     # Save parsed fields

@@ -1,12 +1,13 @@
 """
 uniques_parser.py
 
-Best-effort parser for Unciv unit 'uniques' strings.
-Extracts common percent bonuses and flags that are needed for Base Unit Force computation.
+Heuristic parser for Unciv unit 'uniques' strings.
 
-Improvements:
-- Better detection of naval/ranged naval unit types (submarine, aircraft carrier, melee/ranged water).
-- Some heuristics to capture more percent patterns.
+Fixes:
+- Only classify percent bonuses based on the tag inside <>.
+- Deduplicate percent entries.
+- No fallback using 'when attacking' presence in full text.
+- Improved naval detection remains.
 """
 import re
 
@@ -15,37 +16,33 @@ def parse_unit_modifiers(unit):
     promotions = unit.get('promotions') or []
     text = " ".join(uniques_list + promotions).lower()
 
-    # Collect percent entries like "[+50]% Strength <vs cities>" and variants
-    percent_entries = []
-    # Primary pattern: [NN]% Strength <...>
-    for m in re.finditer(r'\[([+-]?\d+)\]\%?\s*%?\s*strength\s*<([^>]+)>', text):
-        percent = float(m.group(1))
-        tag = m.group(2).strip()
-        percent_entries.append((percent, tag))
+    # Find bracketed percent patterns followed by 'strength' and a tag in <>
+    # Example: "[+50]% Strength <vs cities>"
+    percent_entries = set()
+    for m in re.finditer(r'\[([+-]?\d+)\]\s*%?\s*strength\s*<([^>]+)>', text, flags=re.IGNORECASE):
+        try:
+            percent = float(m.group(1))
+        except ValueError:
+            continue
+        tag = m.group(2).strip().lower()
+        percent_entries.add((percent, tag))
 
-    # Simpler pattern if the previous missed something
-    for m in re.finditer(r'\[([+-]?\d+)\]\%?\s*strength\s*<([^>]+)>', text):
-        percent = float(m.group(1))
-        tag = m.group(2).strip()
-        percent_entries.append((percent, tag))
-
+    # Initialize result buckets
     city_attack_bonus = 0.0
     attack_vs_bonus = 0.0
     attack_bonus = 0.0
     defend_bonus = 0.0
 
+    # Classify purely by tag content (no global-text fallback)
     for percent, tag in percent_entries:
         if 'city' in tag:
             city_attack_bonus += percent
-        elif 'when attacking' in tag or 'when attacking' in text and 'when defending' not in tag:
-            if 'when attacking' in tag:
-                attack_bonus += percent
-            else:
-                attack_bonus += percent
-        elif 'when defending' in tag or 'when defending' in text:
+        elif 'when attacking' in tag:
+            attack_bonus += percent
+        elif 'when defending' in tag:
             defend_bonus += percent
         else:
-            # generic 'vs [mounted]' or 'vs [submarine]' -> treat as attack_vs_bonus
+            # Generic "vs ..." (including specific unit classes) -> attack_vs
             attack_vs_bonus += percent
 
     # Paradrop detection
@@ -57,7 +54,7 @@ def parse_unit_modifiers(unit):
     # Self-destruct detection
     self_destructs = 'self-destruct' in text or 'self destruct' in text or 'suicide' in text or 'explodes when attacking' in text
 
-    # Extra attacks detection
+    # Extra attacks detection (heuristic variations)
     extra_attacks = 0
     m = re.search(r'(\d+)\s+extra\s+attacks?', text)
     if m:
@@ -71,20 +68,11 @@ def parse_unit_modifiers(unit):
     if extra_attacks == 0 and ('extra attack' in text or 'attack twice' in text or 'can attack twice' in text or 'attacks twice' in text):
         extra_attacks = 1
 
-    # Ranged naval detection: check for water/submarine/carrier or unitType containing 'water' or 'submarine' etc.
+    # Ranged naval detection
     unit_type = (unit.get('unitType') or '').lower()
-    ut_flags = unit_type
-    is_ranged_naval = False
     ranged_strength = unit.get('rangedStrength', 0)
-
-    if ranged_strength and ranged_strength > 0:
-        # common naval indicators
-        naval_indicators = ['water', 'submarine', 'aircraft carrier', 'carrier', 'ship', 'melee water', 'ranged water']
-        if any(k in ut_flags for k in naval_indicators):
-            is_ranged_naval = True
-        # also if the uniques mention "can only attack [water]" or similar
-        if 'can only attack [water]' in text or 'can only attack water' in text:
-            is_ranged_naval = True
+    naval_indicators = ['water', 'submarine', 'aircraft carrier', 'carrier', 'ship', 'melee water', 'ranged water']
+    is_ranged_naval = (ranged_strength and ranged_strength > 0) and any(k in unit_type for k in naval_indicators)
 
     return {
         'city_attack_bonus': city_attack_bonus,
