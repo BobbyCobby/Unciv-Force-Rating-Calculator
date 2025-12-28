@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """
-Test harness: downloads Unciv Units.json (Vanilla + Gods & Kings) from master branch,
+Test harness: fetches all Units.json under android/assets/jsons in yairm210/Unciv (master),
 parses unit uniques, computes Base Unit Force and compares to docs/Other/Force-rating-calculation.md (master).
-Usage: python3 test_units.py [--debug] [--threshold N]
+
+Usage:
+  python3 test_units.py [--debug] [--threshold N]
 """
 import json
 import re
 import argparse
 from urllib.request import urlopen, Request
+from urllib.error import HTTPError, URLError
 from main import compute_base_force
 from uniques_parser import parse_unit_modifiers
 
-# Use the latest in master branch
-UNITS_URLS = [
-    "https://raw.githubusercontent.com/yairm210/Unciv/master/android/assets/jsons/Civ%20V%20-%20Vanilla/Units.json",
-    "https://raw.githubusercontent.com/yairm210/Unciv/master/android/assets/jsons/Civ%20V%20-%20Gods%20%26%20Kings/Units.json"
-]
+GITHUB_API_CONTENTS = "https://api.github.com/repos/yairm210/Unciv/contents/android/assets/jsons"
+RAW_BASE = "https://raw.githubusercontent.com/yairm210/Unciv/master/android/assets/jsons"
 MD_RAW = "https://raw.githubusercontent.com/yairm210/Unciv/master/docs/Other/Force-rating-calculation.md"
 
 def fetch_text(url, timeout=30):
@@ -36,7 +36,32 @@ def fetch_json(url):
     cleaned = strip_js_comments_and_trailing_commas(txt)
     return json.loads(cleaned)
 
-def load_all_units(urls):
+def list_units_json_paths():
+    """
+    Use GitHub API to list subfolders under android/assets/jsons and build Units.json raw URLs.
+    If the API fails (rate limit), fall back to common folders (Vanilla and Gods & Kings).
+    """
+    try:
+        req = Request(GITHUB_API_CONTENTS, headers={"User-Agent": "uncliv-test/1.0"})
+        with urlopen(req, timeout=30) as r:
+            data = json.loads(r.read().decode('utf-8'))
+            paths = []
+            for entry in data:
+                if entry.get('type') == 'dir':
+                    name = entry.get('name')
+                    paths.append(f"{RAW_BASE}/{name}/Units.json")
+            if not paths:
+                raise RuntimeError("No subfolders found — falling back")
+            return paths
+    except Exception:
+        # fallback
+        return [
+            f"{RAW_BASE}/Civ%20V%20-%20Vanilla/Units.json",
+            f"{RAW_BASE}/Civ%20V%20-%20Gods%20%26%20Kings/Units.json"
+        ]
+
+def load_all_units():
+    urls = list_units_json_paths()
     all_units = []
     for u in urls:
         try:
@@ -58,36 +83,6 @@ def parse_expected(md_text):
         results[name] = val
     return results
 
-def compute_for_unit(u):
-    name = u.get('name')
-    movement = u.get('movement', 2)
-    strength = u.get('strength', 0)
-    ranged = u.get('rangedStrength', 0)
-
-    parsed = parse_unit_modifiers(u)
-    # Use parsed nuke flag instead of name heuristics
-    is_nuke = parsed.get('is_nuke', False)
-
-    # If a unit is marked self-destructing but is a nuke, skip applying the self-destruct penalty
-    self_destructs_effective = parsed.get('self_destructs', False) and (not is_nuke)
-
-    return compute_base_force(
-        strength=strength,
-        ranged_strength=ranged,
-        movement=movement,
-        is_nuke=is_nuke,
-        is_ranged_naval=parsed.get('is_ranged_naval', False),
-        self_destructs=self_destructs_effective,
-        city_attack_bonus=parsed.get('city_attack_bonus', 0.0),
-        attack_vs_bonus=parsed.get('attack_vs_bonus', 0.0),
-        attack_bonus=parsed.get('attack_bonus', 0.0),
-        defend_bonus=parsed.get('defend_bonus', 0.0),
-        paradrop_able=parsed.get('paradrop_able', False),
-        must_set_up=parsed.get('must_set_up', False),
-        terrain_bonus=0.0,
-        extra_attacks=parsed.get('extra_attacks', 0)
-    )
-
 def compute_for_unit_with_breakdown(u):
     name = u.get('name')
     movement = u.get('movement', 2)
@@ -96,9 +91,8 @@ def compute_for_unit_with_breakdown(u):
 
     parsed = parse_unit_modifiers(u)
     is_nuke = parsed.get('is_nuke', False)
-    self_destructs_effective = parsed.get('self_destructs', False) and (not is_nuke)
 
-    # replicate compute_base_force stepwise for breakdown
+    # compute start and movement
     from math import pow
     if ranged and ranged > 0:
         start = pow(ranged, 1.45)
@@ -111,22 +105,14 @@ def compute_for_unit_with_breakdown(u):
     notes = []
     notes.append(f"start={start:.4f} (used {used}), movement={movement} => base={base:.4f}")
 
-    if is_nuke:
-        base += 4000.0
-        notes.append("nuke:+4000")
-
+    # multiplicative modifiers
     total_mult = 1.0
-
     if parsed.get('is_ranged_naval', False):
         total_mult *= 0.5
         notes.append("ranged_naval: *0.5")
-
-    if self_destructs_effective:
+    if parsed.get('self_destructs', False):
         total_mult *= 0.5
         notes.append("self_destruct: *0.5")
-    else:
-        if parsed.get('self_destructs', False) and is_nuke:
-            notes.append("self_destruct present but skipped for nuke")
 
     if parsed.get('city_attack_bonus', 0.0):
         m = 1.0 + 0.5 * (parsed['city_attack_bonus'] / 100.0)
@@ -160,6 +146,10 @@ def compute_for_unit_with_breakdown(u):
         notes.append(f"extra_attacks {parsed['extra_attacks']} -> *{m:.4f}")
 
     final = base * total_mult
+    if is_nuke:
+        final += 4000.0
+        notes.append("nuke:+4000")
+
     return final, parsed, notes, {
         'start': start, 'movement_mult': move_mult, 'base': base, 'total_mult': total_mult
     }
@@ -170,7 +160,7 @@ def main():
     argp.add_argument("--threshold", type=float, default=3.0, help="delta threshold for breakdown")
     args = argp.parse_args()
 
-    mapping = load_all_units(UNITS_URLS)
+    mapping = load_all_units()
     md = fetch_text(MD_RAW)
     expected = parse_expected(md)
 

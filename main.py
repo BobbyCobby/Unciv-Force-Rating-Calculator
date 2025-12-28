@@ -10,56 +10,63 @@ def compute_base_force(strength=None, ranged_strength=None, movement=2, is_nuke=
                         paradrop_able=False, must_set_up=False, terrain_bonus=0.0,
                         extra_attacks=0):
     """
-    Compute Base Unit Force using corrected application of bonuses.
+    Compute Base Unit Force using corrected application of bonuses and ordering.
     All percent arguments are in percent, e.g. city_attack_bonus=50 means +50%.
+    Important: multiplicative modifiers are applied first, then nukes get +4000 (added).
     """
     from math import pow
 
+    # starting value (choose ranged or melee)
     if ranged_strength is not None and ranged_strength > 0:
-        base = pow(ranged_strength, 1.45)
+        base_start = pow(ranged_strength, 1.45)
     else:
-        base = pow(strength, 1.5)
+        base_start = pow(strength, 1.5)
 
-    base *= pow(movement, 0.3)
+    # movement multiplier
+    base = base_start * pow(movement, 0.3)
 
-    if is_nuke:
-        base += 4000.0
+    # Build multiplicative modifiers (apply these to base)
+    total_mult = 1.0
 
-    # Ranged naval halves the force
     if is_ranged_naval:
-        base *= 0.5
+        total_mult *= 0.5
 
     if self_destructs:
-        base *= 0.5
+        total_mult *= 0.5
 
-    # Apply percentage modifiers as multipliers (1 + fraction)
     if city_attack_bonus != 0:
-        base *= (1.0 + 0.5 * percent_to_decimal(city_attack_bonus))
+        total_mult *= (1.0 + 0.5 * percent_to_decimal(city_attack_bonus))
 
     if attack_vs_bonus != 0:
-        base *= (1.0 + 0.25 * percent_to_decimal(attack_vs_bonus))
+        total_mult *= (1.0 + 0.25 * percent_to_decimal(attack_vs_bonus))
 
     if attack_bonus != 0:
-        base *= (1.0 + 0.5 * percent_to_decimal(attack_bonus))
+        total_mult *= (1.0 + 0.5 * percent_to_decimal(attack_bonus))
 
     if defend_bonus != 0:
-        base *= (1.0 + 0.5 * percent_to_decimal(defend_bonus))
+        total_mult *= (1.0 + 0.5 * percent_to_decimal(defend_bonus))
 
     if paradrop_able:
-        base *= 1.25
+        total_mult *= 1.25
 
     if must_set_up:
-        base *= 0.8
+        total_mult *= 0.8
 
     if terrain_bonus != 0:
-        base *= (1.0 + 0.5 * percent_to_decimal(terrain_bonus))
+        total_mult *= (1.0 + 0.5 * percent_to_decimal(terrain_bonus))
 
     if extra_attacks != 0:
-        # +20% per extra attack -> multiply by (1 + 0.2 * extra_attacks)
-        base *= (1.0 + 0.2 * extra_attacks)
+        total_mult *= (1.0 + 0.2 * extra_attacks)
 
-    return base
+    final = base * total_mult
 
+    # Nuke bonus is added after multiplicative modifiers (this follows the doc numbers)
+    if is_nuke:
+        final += 4000.0
+
+    return final
+
+# interactive CLI kept for manual use
 def interactive_main():
     is_ranged = get_input_as_bool("Is the unit ranged? ")
     if is_ranged:
