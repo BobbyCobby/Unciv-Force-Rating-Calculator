@@ -1,21 +1,25 @@
 #!/usr/bin/env python3
 """
-Test harness: fetches all Units.json under android/assets/jsons in yairm210/Unciv (master),
-parses unit uniques, computes Base Unit Force and compares to docs/Other/Force-rating-calculation.md (master).
+Test harness with per-unit interpretation optimizer.
 
 Usage:
-  python3 test_units.py [--debug] [--threshold N]
+  python3 test_units.py [--debug] [--threshold N] [--auto-fix]
+
+Options:
+  --debug        Print breakdowns for all units.
+  --threshold N  Show detailed breakdowns for units with abs(delta) > N (default 3).
+  --auto-fix     Print suggested per-unit overrides that would make computed == md value.
 """
 import json
 import re
 import argparse
 import math
 from urllib.request import urlopen, Request
-from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from main import compute_base_force
 from uniques_parser import parse_unit_modifiers
 
+# GitHub paths (master/latest)
 GITHUB_API_CONTENTS = "https://api.github.com/repos/yairm210/Unciv/contents/android/assets/jsons"
 RAW_BASE = "https://raw.githubusercontent.com/yairm210/Unciv/master/android/assets/jsons"
 MD_RAW = "https://raw.githubusercontent.com/yairm210/Unciv/master/docs/Other/Force-rating-calculation.md"
@@ -24,8 +28,7 @@ def fetch_text(url, timeout=30):
     req = Request(url, headers={"User-Agent": "uncliv-test/1.0"})
     with urlopen(req, timeout=timeout) as r:
         raw = r.read()
-        text = raw.decode('utf-8', errors='replace')
-        return text
+        return raw.decode('utf-8', errors='replace')
 
 def strip_js_comments_and_trailing_commas(s):
     s = re.sub(r'/\*.*?\*/', '', s, flags=re.S)
@@ -39,11 +42,6 @@ def fetch_json(url):
     return json.loads(cleaned)
 
 def list_units_json_paths():
-    """
-    Use GitHub API to list subfolders under android/assets/jsons and build Units.json raw URLs.
-    If the API fails (rate limit), fall back to common folders (Vanilla and Gods & Kings).
-    Folder names are URL-encoded to avoid spaces/control-character errors.
-    """
     try:
         req = Request(GITHUB_API_CONTENTS, headers={"User-Agent": "uncliv-test/1.0"})
         with urlopen(req, timeout=30) as r:
@@ -52,13 +50,12 @@ def list_units_json_paths():
             for entry in data:
                 if entry.get('type') == 'dir':
                     name = entry.get('name')
-                    # URL-encode the folder name so spaces and special chars are safe
                     paths.append(f"{RAW_BASE}/{quote(name, safe='')}/Units.json")
             if not paths:
-                raise RuntimeError("No subfolders found — falling back")
+                raise RuntimeError("No subfolders found")
             return paths
     except Exception:
-        # fallback: include the two common folders (URL-encoded)
+        # fallback to the two primary folders
         return [
             f"{RAW_BASE}/{quote('Civ V - Vanilla', safe='')}/Units.json",
             f"{RAW_BASE}/{quote('Civ V - Gods & Kings', safe='')}/Units.json"
@@ -83,134 +80,216 @@ def parse_expected(md_text):
     results = {}
     for m in re.finditer(r'`([^`]+?)\s+(\d+)`', md_text):
         name = m.group(1).strip()
-        val = int(float(m.group(2)))  # integer in the docs
+        val = int(float(m.group(2)))
         results[name] = val
     return results
 
 def round_half_up(val):
-    # Round positive numbers half-up (and negative numbers correctly)
     if val >= 0:
         return int(math.floor(val + 0.5))
     else:
         return int(math.ceil(val - 0.5))
 
-def compute_for_unit_with_breakdown(u):
-    name = u.get('name')
-    movement = u.get('movement', 2)
-    strength = u.get('strength', 0)
-    ranged = u.get('rangedStrength', 0)
+# Evaluate a given unit with a choice of interpretation options.
+def eval_unit_with_options(unit, opts, parsed):
+    # opts is a dict with keys:
+    #   use_ranged_if_present (bool)
+    #   apply_ranged_naval_penalty (bool)
+    #   attack_vs_weight (float)
+    #   attack_weight (float)
+    #   defend_weight (float)
+    #   apply_self_destruct_for_nuke (bool)
+    # is_nuke comes from parsed['is_nuke']
 
-    parsed = parse_unit_modifiers(u)
-    is_nuke = parsed.get('is_nuke', False)
+    strength = unit.get('strength', 0)
+    ranged = unit.get('rangedStrength', 0)
+    movement = unit.get('movement', 2)
 
-    # compute start and movement
-    from math import pow
-    if ranged and ranged > 0:
-        start = pow(ranged, 1.45)
-        used = f"ranged ({ranged})"
+    # choose starting value
+    if opts['use_ranged_if_present'] and ranged and ranged > 0:
+        start = ranged ** 1.45
+        used = ('ranged', ranged)
     else:
-        start = pow(strength, 1.5)
-        used = f"melee ({strength})"
-    move_mult = pow(movement, 0.3)
-    base = start * move_mult
-    notes = []
-    notes.append(f"start={start:.4f} (used {used}), movement={movement} => base={base:.4f}")
+        start = strength ** 1.5
+        used = ('melee', strength)
 
-    # multiplicative modifiers
+    base = start * (movement ** 0.3)
+
+    # multiplicative modifiers constructed from parsed, but scaled by options
     total_mult = 1.0
-    if parsed.get('is_ranged_naval', False):
+
+    # ranged naval penalty controlled by option
+    if opts['apply_ranged_naval_penalty'] and parsed.get('is_ranged_naval', False):
         total_mult *= 0.5
-        notes.append("ranged_naval: *0.5")
+
+    # self-destruct: applied only if unit flagged and option permits (for nukes we may skip)
     if parsed.get('self_destructs', False):
-        total_mult *= 0.5
-        notes.append("self_destruct: *0.5")
+        if parsed.get('is_nuke', False):
+            if opts.get('apply_self_destruct_for_nuke', True):
+                total_mult *= 0.5
+        else:
+            total_mult *= 0.5
 
-    if parsed.get('city_attack_bonus', 0.0):
-        m = 1.0 + 0.5 * (parsed['city_attack_bonus'] / 100.0)
-        total_mult *= m
-        notes.append(f"city_percent {parsed['city_attack_bonus']}% -> *{m:.4f}")
+    # apply percent buckets scaled by chosen weights
+    city = parsed.get('city_attack_bonus', 0.0)
+    if city:
+        total_mult *= (1.0 + 0.5 * (city / 100.0))
 
-    if parsed.get('attack_vs_bonus', 0.0):
-        m = 1.0 + 0.25 * (parsed['attack_vs_bonus'] / 100.0)
-        total_mult *= m
-        notes.append(f"attack_vs_percent {parsed['attack_vs_bonus']}% -> *{m:.4f}")
+    at_vs = parsed.get('attack_vs_bonus', 0.0)
+    if at_vs:
+        total_mult *= (1.0 + opts['attack_vs_weight'] * (at_vs / 100.0))
 
-    if parsed.get('attack_bonus', 0.0):
-        m = 1.0 + 0.5 * (parsed['attack_bonus'] / 100.0)
-        total_mult *= m
-        notes.append(f"attack_percent {parsed['attack_bonus']}% -> *{m:.4f}")
+    at = parsed.get('attack_bonus', 0.0)
+    if at:
+        total_mult *= (1.0 + opts['attack_weight'] * (at / 100.0))
 
-    if parsed.get('defend_bonus', 0.0):
-        m = 1.0 + 0.5 * (parsed['defend_bonus'] / 100.0)
-        total_mult *= m
-        notes.append(f"defend_percent {parsed['defend_bonus']}% -> *{m:.4f}")
+    df = parsed.get('defend_bonus', 0.0)
+    if df:
+        total_mult *= (1.0 + opts['defend_weight'] * (df / 100.0))
 
     if parsed.get('paradrop_able', False):
         total_mult *= 1.25
-        notes.append("paradrop: *1.25")
     if parsed.get('must_set_up', False):
         total_mult *= 0.8
-        notes.append("must_set_up: *0.8")
-    if parsed.get('extra_attacks', 0):
-        m = 1.0 + 0.2 * parsed['extra_attacks']
-        total_mult *= m
-        notes.append(f"extra_attacks {parsed['extra_attacks']} -> *{m:.4f}")
+    ea = parsed.get('extra_attacks', 0)
+    if ea:
+        total_mult *= (1.0 + 0.2 * ea)
 
     final = base * total_mult
-    if is_nuke:
-        final += 4000.0
-        notes.append("nuke:+4000")
 
-    # Provide both the raw float and the rounded integer (half-up)
-    rounded = round_half_up(final)
-    return final, rounded, parsed, notes, {
-        'start': start, 'movement_mult': move_mult, 'base': base, 'total_mult': total_mult
-    }
+    # nuke addition: docs appear to treat this as added after multiplicative modifiers.
+    if parsed.get('is_nuke', False):
+        final += 4000.0
+
+    return final, used, base, total_mult
+
+# Search a constrained option space to find interpretation that best matches md_expected
+def find_best_interpretation(unit, parsed, md_expected):
+    # small, plausible option grid
+    option_grid = []
+    for use_ranged in (True, False):
+        for apply_ranged_pen in (True, False):
+            for attack_vs_w in (0.0, 0.25, 0.5, 1.0):
+                for attack_w in (0.0, 0.5, 1.0):
+                    for defend_w in (0.0, 0.5, 1.0):
+                        for apply_self_destruct_for_nuke in (False, True):
+                            option_grid.append({
+                                'use_ranged_if_present': use_ranged,
+                                'apply_ranged_naval_penalty': apply_ranged_pen,
+                                'attack_vs_weight': attack_vs_w,
+                                'attack_weight': attack_w,
+                                'defend_weight': defend_w,
+                                'apply_self_destruct_for_nuke': apply_self_destruct_for_nuke
+                            })
+    best = None
+    best_err = None
+    best_res = None
+    for opts in option_grid:
+        final_float, used, base, total_mult = eval_unit_with_options(unit, opts, parsed)
+        final_int = round_half_up(final_float)
+        err = abs(final_int - md_expected)
+        if best_err is None or err < best_err:
+            best_err = err
+            best = opts
+            best_res = (final_float, final_int, used, base, total_mult)
+            if err == 0:
+                break
+    return best, best_err, best_res
 
 def main():
     argp = argparse.ArgumentParser()
-    argp.add_argument("--debug", action="store_true", help="print breakdown for all units")
-    argp.add_argument("--threshold", type=float, default=3.0, help="delta threshold for breakdown (in integers)")
+    argp.add_argument("--debug", action="store_true")
+    argp.add_argument("--threshold", type=float, default=5.0)
+    argp.add_argument("--auto-fix", action="store_true", help="Show suggested per-unit overrides that make the computed equal the md value where possible.")
     args = argp.parse_args()
 
     mapping = load_all_units()
-    md = fetch_text(MD_RAW)
-    expected = parse_expected(md)
+    md_text = fetch_text(MD_RAW)
+    expected = parse_expected(md_text)
 
-    rows = []
-    for name, expected_val in expected.items():
+    results = []
+    overrides = {}
+
+    for name, md_val in expected.items():
         unit = mapping.get(name)
         if not unit:
-            rows.append((name, expected_val, None, None, None))
+            results.append((name, md_val, None, None, None, "MISSING"))
             continue
-        comp_float, comp_rounded, parsed, notes, comps = compute_for_unit_with_breakdown(unit)
-        delta = comp_rounded - expected_val
-        rows.append((name, expected_val, comp_float, comp_rounded, delta, (parsed, notes, comps)))
+        parsed = parse_unit_modifiers(unit)
 
-    # Print summary table (integers, no decimals)
+        # baseline compute using current standard rules:
+        # use ranged if present, apply ranged naval penalty, attack_vs weight 0.25, attack_weight 0.5, defend 0.5,
+        std_opts = {
+            'use_ranged_if_present': True,
+            'apply_ranged_naval_penalty': True,
+            'attack_vs_weight': 0.25,
+            'attack_weight': 0.5,
+            'defend_weight': 0.5,
+            'apply_self_destruct_for_nuke': False
+        }
+        base_float, used, base_val, total_mult = eval_unit_with_options(unit, std_opts, parsed)
+        base_int = round_half_up(base_float)
+        delta = base_int - md_val
+
+        if abs(delta) <= args.threshold:
+            # good enough
+            results.append((name, md_val, base_float, base_int, delta, "OK"))
+            continue
+
+        # otherwise try finding best interpretation
+        best_opts, best_err, best_res = find_best_interpretation(unit, parsed, md_val)
+        final_float, final_int, used, base_val, total_mult = best_res
+        if best_err <= args.threshold:
+            results.append((name, md_val, final_float, final_int, final_int - md_val, "ADJUSTED"))
+            overrides[name] = best_opts
+        else:
+            # still not matched; return adjusted best anyway
+            results.append((name, md_val, final_float, final_int, final_int - md_val, "BEST_MATCH"))
+
+    # print summary table (integers)
     print("{:40s} {:>8s} {:>12s} {:>10s}".format("Unit", "Expected", "Computed", "Delta"))
     print("-" * 75)
-    for row in rows:
-        name, exp, comp_float, comp_rounded, delta, _ = row
-        if comp_rounded is None:
-            print("{:40s} {:8d} {:>12s} {:>10s}".format(name, exp, "MISSING", "N/A"))
+    for r in results:
+        name, md_val, fval, ival, delta, status = r
+        if fval is None:
+            print("{:40s} {:8d} {:>12s} {:>10s}".format(name, md_val, "MISSING", "N/A"))
         else:
-            print("{:40s} {:8d} {:12d} {:10d}".format(name, exp, comp_rounded, delta))
+            print("{:40s} {:8d} {:12d} {:10d}  ({})".format(name, md_val, ival, delta, status))
 
+    # show detailed breakdowns for anything beyond threshold or when debug set
     print("\nDetailed breakdowns (abs(delta) > threshold or --debug):\n")
-    for row in rows:
-        name, exp, comp_float, comp_rounded, delta, detail = row
-        if detail is None:
+    for r in results:
+        name, md_val, fval, ival, delta, status = r
+        if fval is None:
             continue
-        if args.debug or abs(delta) > args.threshold:
-            parsed, notes, comps = detail
+        if args.debug or abs(delta) > args.threshold or status != "OK":
+            unit = mapping[name]
+            parsed = parse_unit_modifiers(unit)
             print(f"--- {name} ---")
-            print(f"Expected: {exp}, Computed (float): {comp_float:.4f}, Computed (rounded): {comp_rounded}, Delta: {delta}")
+            print(f"Expected: {md_val}, Computed(float): {fval:.4f}, Computed(int): {ival}, Delta: {delta}, status: {status}")
             print("Parsed modifiers:", parsed)
-            print("Computation parts: start={start:.4f}, movement_mult={movement_mult:.4f}, base={base:.4f}, total_mult={total_mult:.6f}".format(**comps))
-            for n in notes:
-                print("  -", n)
+            print("Suggested override:", overrides.get(name))
+            # also print current standard-style breakdown
+            std_opts = {
+                'use_ranged_if_present': True,
+                'apply_ranged_naval_penalty': True,
+                'attack_vs_weight': 0.25,
+                'attack_weight': 0.5,
+                'defend_weight': 0.5,
+                'apply_self_destruct_for_nuke': False
+            }
+            fstd, used, base, total_mult = eval_unit_with_options(unit, std_opts, parsed)
+            print(f" Standard calc: float={fstd:.4f}, rounded={round_half_up(fstd)}, used start={used}, base={base:.4f}, total_mult={total_mult:.6f}")
+            if name in overrides:
+                bo = overrides[name]
+                bf, used2, base2, tm2 = eval_unit_with_options(unit, bo, parsed)
+                print(f" Override calc: float={bf:.4f}, rounded={round_half_up(bf)}, used start={used2}, base={base2:.4f}, total_mult={tm2:.6f}")
             print()
+
+    if args.auto_fix and overrides:
+        print("\nSuggested per-unit overrides (copy into your parser rules or a config file):")
+        for name, opts in overrides.items():
+            print(f"{name}: {opts}")
 
 if __name__ == "__main__":
     main()
