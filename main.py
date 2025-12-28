@@ -47,23 +47,23 @@ if self_destructs:
 
 city_attack_bonus = float(input("Percent bonus when attacking cities (0 if none): "))
 
-if city_attack_bonus != 0: #If city_attack_bonus were 0, multiplying by half of it would make force zero
-	force *= percent_to_decimal(0.5 * city_attack_bonus)
+if city_attack_bonus != 0: #If city_attack_bonus were 0, adding half of it would make force zero
+	force *= percent_to_decimal(1.5 * city_attack_bonus)
 
 attack_vs_bonus = float(input("Bonus when attacking something that's not a city (0 if none): "))
 
-if attack_vs_bonus != 0: #If attack_vs_bonus were 0, multiplying by a quarter of it would make force zero
-	force *= percent_to_decimal(0.25 * attack_vs_bonus)
+if attack_vs_bonus != 0: #If attack_vs_bonus were 0, adding a quarter of it would make force zero
+	force *= percent_to_decimal(1.25 * attack_vs_bonus)
 
 attack_bonus = float(input("Bonus when attacking (0 if none): "))
 
-if attack_bonus != 0: #If attack_bonus were 0, multiplying by half of it would make force zero
-	force *= percent_to_decimal(0.5 * attack_bonus)
+if attack_bonus != 0: #If attack_bonus were 0, adding half of it would make force zero
+	force *= percent_to_decimal(1.5 * attack_bonus)
 
 defend_bonus = float(input("Bonus when defending (0 if none): "))
 
-if defend_bonus != 0: #If defend_bonus were 0, multiplying by half of it would make force zero
-	force *= percent_to_decimal(0.5 * defend_bonus)
+if defend_bonus != 0: #If defend_bonus were 0, adding half of it would make force zero
+	force *= percent_to_decimal(1.5 * defend_bonus)
 
 paradrop_able = get_input_as_bool("Can it paradrop? ")
 
@@ -77,13 +77,13 @@ if must_set_up:
 
 terrain_bonus = float(input("Bonus on a particular terrain (0 if none): "))
 
-if terrain_bonus != 0: #If terrain_bonus were 0, multiplying by half of it would make force zero
-	force *= percent_to_decimal(0.5 * terrain_bonus)
+if terrain_bonus != 0: #If terrain_bonus were 0, adding half of it would make force zero
+	force *= percent_to_decimal(1.5 * terrain_bonus)
 
 extra_attacks = int(input("Number of extra attacks per turn (0 if none): "))
 
-if extra_attacks != 0: #If terrain_bonus were 0, multiplying by half of it would make force zero
-	force *= (1.2 * extra_attacks)
+if extra_attacks != 0: #If extra_attacks were 0, adding two-tenths of it would make force zero
+	force *= (1 + (0.2 * extra_attacks)_
 
 print("\n*************************\n")
 print("Base Unit Force: " + str(force))

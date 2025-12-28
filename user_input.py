@@ -29,4 +29,4 @@ def get_input_as_bool(prompt, error_on_bad_input=False):
 		if error_on_bad_input:
 			raise ValueError("Input must be yes, y, true, no, n, or false")
 		else:
-			get_input_as_bool(prompt, error_on_bad_input=error_on_bad_input)
+			return get_input_as_bool(prompt, error_on_bad_input=error_on_bad_input)

@@ -15,9 +15,5 @@
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 def percent_to_decimal(percent):
-	assert 0 <= percent, "Percent must be between 0 and 100"
-	assert percent <= 100, "Percent must be between 0 and 100"
-	
 	decimal = float(percent / 100)
-	
 	return decimal
