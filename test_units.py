@@ -5,15 +5,13 @@ Test harness: downloads Unciv Units.json (Vanilla) at the requested commit and t
 docs/Other/Force-rating-calculation.md file, computes base unit forces using the
 parser, and compares with the expected values in the markdown.
 
-Usage:
-  python3 test_units.py
-
-Note: This is best-effort — the parser extracts many common uniques, but Unciv's
-uniques strings are free-form and may require fine-tuning for edge cases.
+This version is tolerant of // and /* */ comments and trailing commas in the
+Units.json file (Unciv stores JSON with comments).
 """
 import json
 import re
-from urllib.request import urlopen
+from urllib.request import urlopen, Request
+from urllib.error import HTTPError, URLError
 from main import compute_base_force
 from uniques_parser import parse_unit_modifiers
 
@@ -22,13 +20,39 @@ COMMIT = "b57046317937f566c5b4d9c2d2c317183bc60c9f"
 UNITS_RAW = f"https://raw.githubusercontent.com/yairm210/Unciv/{COMMIT}/android/assets/jsons/Civ%20V%20-%20Vanilla/Units.json"
 MD_RAW = f"https://raw.githubusercontent.com/yairm210/Unciv/{COMMIT}/docs/Other/Force-rating-calculation.md"
 
-def fetch_json(url):
-    with urlopen(url) as r:
-        return json.loads(r.read().decode('utf-8'))
+def fetch_text(url, timeout=30):
+    req = Request(url, headers={"User-Agent": "uncliv-test/1.0"})
+    try:
+        with urlopen(req, timeout=timeout) as r:
+            raw = r.read()
+            text = raw.decode('utf-8', errors='replace')
+            # quick sanity: if this looks like HTML, surface a clearer error
+            if '<html' in text.lower()[:200]:
+                raise RuntimeError(f"Fetched content seems to be HTML (possible 404 or rate-limit). URL: {url}")
+            return text
+    except HTTPError as e:
+        raise RuntimeError(f"HTTP error fetching {url}: {e.code} {e.reason}")
+    except URLError as e:
+        raise RuntimeError(f"URL error fetching {url}: {e}")
 
-def fetch_text(url):
-    with urlopen(url) as r:
-        return r.read().decode('utf-8')
+def strip_js_comments_and_trailing_commas(s):
+    # Remove block comments /* ... */
+    s = re.sub(r'/\*.*?\*/', '', s, flags=re.S)
+    # Remove line comments //...
+    s = re.sub(r'//.*', '', s)
+    # Remove trailing commas before } or ]
+    s = re.sub(r',\s*(\}|\])', r'\1', s)
+    return s
+
+def fetch_json(url):
+    text = fetch_text(url)
+    cleaned = strip_js_comments_and_trailing_commas(text)
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError as e:
+        # Dump a helpful snippet for debugging
+        snippet = cleaned[:600].replace('\n', '\\n')
+        raise RuntimeError(f"JSON decode failed for {url}: {e}\nCleaned content (first 600 chars): {snippet}")
 
 def parse_expected(md_text):
     results = {}
@@ -74,7 +98,11 @@ def compute_for_unit(u):
     )
 
 def main():
+    print("Fetching Units.json...", flush=True)
     units = fetch_json(UNITS_RAW)
+    print(f"Loaded {len(units)} unit entries.", flush=True)
+
+    print("Fetching Force-rating md...", flush=True)
     md = fetch_text(MD_RAW)
     expected = parse_expected(md)
 
