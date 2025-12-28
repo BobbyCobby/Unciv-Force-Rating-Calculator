@@ -9,8 +9,10 @@ Usage:
 import json
 import re
 import argparse
+import math
 from urllib.request import urlopen, Request
 from urllib.error import HTTPError, URLError
+from urllib.parse import quote
 from main import compute_base_force
 from uniques_parser import parse_unit_modifiers
 
@@ -40,6 +42,7 @@ def list_units_json_paths():
     """
     Use GitHub API to list subfolders under android/assets/jsons and build Units.json raw URLs.
     If the API fails (rate limit), fall back to common folders (Vanilla and Gods & Kings).
+    Folder names are URL-encoded to avoid spaces/control-character errors.
     """
     try:
         req = Request(GITHUB_API_CONTENTS, headers={"User-Agent": "uncliv-test/1.0"})
@@ -49,15 +52,16 @@ def list_units_json_paths():
             for entry in data:
                 if entry.get('type') == 'dir':
                     name = entry.get('name')
-                    paths.append(f"{RAW_BASE}/{name}/Units.json")
+                    # URL-encode the folder name so spaces and special chars are safe
+                    paths.append(f"{RAW_BASE}/{quote(name, safe='')}/Units.json")
             if not paths:
                 raise RuntimeError("No subfolders found — falling back")
             return paths
     except Exception:
-        # fallback
+        # fallback: include the two common folders (URL-encoded)
         return [
-            f"{RAW_BASE}/Civ%20V%20-%20Vanilla/Units.json",
-            f"{RAW_BASE}/Civ%20V%20-%20Gods%20%26%20Kings/Units.json"
+            f"{RAW_BASE}/{quote('Civ V - Vanilla', safe='')}/Units.json",
+            f"{RAW_BASE}/{quote('Civ V - Gods & Kings', safe='')}/Units.json"
         ]
 
 def load_all_units():
@@ -79,9 +83,16 @@ def parse_expected(md_text):
     results = {}
     for m in re.finditer(r'`([^`]+?)\s+(\d+)`', md_text):
         name = m.group(1).strip()
-        val = float(m.group(2))
+        val = int(float(m.group(2)))  # integer in the docs
         results[name] = val
     return results
+
+def round_half_up(val):
+    # Round positive numbers half-up (and negative numbers correctly)
+    if val >= 0:
+        return int(math.floor(val + 0.5))
+    else:
+        return int(math.ceil(val - 0.5))
 
 def compute_for_unit_with_breakdown(u):
     name = u.get('name')
@@ -150,14 +161,16 @@ def compute_for_unit_with_breakdown(u):
         final += 4000.0
         notes.append("nuke:+4000")
 
-    return final, parsed, notes, {
+    # Provide both the raw float and the rounded integer (half-up)
+    rounded = round_half_up(final)
+    return final, rounded, parsed, notes, {
         'start': start, 'movement_mult': move_mult, 'base': base, 'total_mult': total_mult
     }
 
 def main():
     argp = argparse.ArgumentParser()
     argp.add_argument("--debug", action="store_true", help="print breakdown for all units")
-    argp.add_argument("--threshold", type=float, default=3.0, help="delta threshold for breakdown")
+    argp.add_argument("--threshold", type=float, default=3.0, help="delta threshold for breakdown (in integers)")
     args = argp.parse_args()
 
     mapping = load_all_units()
@@ -168,29 +181,31 @@ def main():
     for name, expected_val in expected.items():
         unit = mapping.get(name)
         if not unit:
-            rows.append((name, expected_val, None, "MISSING", None))
+            rows.append((name, expected_val, None, None, None))
             continue
-        comp, parsed, notes, comps = compute_for_unit_with_breakdown(unit)
-        rows.append((name, expected_val, comp, comp - expected_val, (parsed, notes, comps)))
+        comp_float, comp_rounded, parsed, notes, comps = compute_for_unit_with_breakdown(unit)
+        delta = comp_rounded - expected_val
+        rows.append((name, expected_val, comp_float, comp_rounded, delta, (parsed, notes, comps)))
 
+    # Print summary table (integers, no decimals)
     print("{:40s} {:>8s} {:>12s} {:>10s}".format("Unit", "Expected", "Computed", "Delta"))
     print("-" * 75)
     for row in rows:
-        name, exp, comp, delta, _ = row
-        if comp is None:
-            print("{:40s} {:8.2f} {:>12s} {:>10s}".format(name, exp, "MISSING", "N/A"))
+        name, exp, comp_float, comp_rounded, delta, _ = row
+        if comp_rounded is None:
+            print("{:40s} {:8d} {:>12s} {:>10s}".format(name, exp, "MISSING", "N/A"))
         else:
-            print("{:40s} {:8.2f} {:12.2f} {:10.2f}".format(name, exp, comp, delta))
+            print("{:40s} {:8d} {:12d} {:10d}".format(name, exp, comp_rounded, delta))
 
     print("\nDetailed breakdowns (abs(delta) > threshold or --debug):\n")
     for row in rows:
-        name, exp, comp, delta, detail = row
-        if comp is None:
+        name, exp, comp_float, comp_rounded, delta, detail = row
+        if detail is None:
             continue
         if args.debug or abs(delta) > args.threshold:
             parsed, notes, comps = detail
             print(f"--- {name} ---")
-            print(f"Expected: {exp}, Computed: {comp:.4f}, Delta: {delta:.4f}")
+            print(f"Expected: {exp}, Computed (float): {comp_float:.4f}, Computed (rounded): {comp_rounded}, Delta: {delta}")
             print("Parsed modifiers:", parsed)
             print("Computation parts: start={start:.4f}, movement_mult={movement_mult:.4f}, base={base:.4f}, total_mult={total_mult:.6f}".format(**comps))
             for n in notes:
