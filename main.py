@@ -83,7 +83,7 @@ if terrain_bonus != 0: #If terrain_bonus were 0, adding half of it would make fo
 extra_attacks = int(input("Number of extra attacks per turn (0 if none): "))
 
 if extra_attacks != 0: #If extra_attacks were 0, adding two-tenths of it would make force zero
-	force *= (1 + (0.2 * extra_attacks)_
+	force *= (1 + (0.2 * extra_attacks))
 
 print("\n*************************\n")
 print("Base Unit Force: " + str(force))
