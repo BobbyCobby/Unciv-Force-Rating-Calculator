@@ -3,11 +3,11 @@ uniques_parser.py
 
 Heuristic parser for Unciv unit 'uniques' strings.
 
-Fixes:
-- Only classify percent bonuses based on the tag inside <>.
-- Deduplicate percent entries.
-- No fallback using 'when attacking' presence in full text.
-- Improved naval detection remains.
+Behavior:
+- Classifies only bracketed percent Strength entries by their explicit tag inside <>.
+- Deduplicates percent entries.
+- Detects paradrop, must-set-up, self-destruct, extra attacks, ranged-naval, and nuclear-weapon uniques.
+- Nuclear-weapon detection inspects the unit's uniques/promotions text (no hardcoded unit names).
 """
 import re
 
@@ -16,8 +16,7 @@ def parse_unit_modifiers(unit):
     promotions = unit.get('promotions') or []
     text = " ".join(uniques_list + promotions).lower()
 
-    # Find bracketed percent patterns followed by 'strength' and a tag in <>
-    # Example: "[+50]% Strength <vs cities>"
+    # Collect unique percent entries like "[+50]% Strength <vs cities>"
     percent_entries = set()
     for m in re.finditer(r'\[([+-]?\d+)\]\s*%?\s*strength\s*<([^>]+)>', text, flags=re.IGNORECASE):
         try:
@@ -27,13 +26,12 @@ def parse_unit_modifiers(unit):
         tag = m.group(2).strip().lower()
         percent_entries.add((percent, tag))
 
-    # Initialize result buckets
     city_attack_bonus = 0.0
     attack_vs_bonus = 0.0
     attack_bonus = 0.0
     defend_bonus = 0.0
 
-    # Classify purely by tag content (no global-text fallback)
+    # Classify only by explicit tag content inside <>
     for percent, tag in percent_entries:
         if 'city' in tag:
             city_attack_bonus += percent
@@ -54,7 +52,7 @@ def parse_unit_modifiers(unit):
     # Self-destruct detection
     self_destructs = 'self-destruct' in text or 'self destruct' in text or 'suicide' in text or 'explodes when attacking' in text
 
-    # Extra attacks detection (heuristic variations)
+    # Extra attacks detection (heuristic)
     extra_attacks = 0
     m = re.search(r'(\d+)\s+extra\s+attacks?', text)
     if m:
@@ -68,11 +66,27 @@ def parse_unit_modifiers(unit):
     if extra_attacks == 0 and ('extra attack' in text or 'attack twice' in text or 'can attack twice' in text or 'attacks twice' in text):
         extra_attacks = 1
 
-    # Ranged naval detection
+    # Ranged naval detection: unitType containing water/submarine/carrier etc. AND rangedStrength present
     unit_type = (unit.get('unitType') or '').lower()
     ranged_strength = unit.get('rangedStrength', 0)
-    naval_indicators = ['water', 'submarine', 'aircraft carrier', 'carrier', 'ship', 'melee water', 'ranged water']
+    naval_indicators = ['water', 'submarine', 'carrier', 'ship', 'melee water', 'ranged water']
     is_ranged_naval = (ranged_strength and ranged_strength > 0) and any(k in unit_type for k in naval_indicators)
+
+    # Nuclear weapon detection (look at uniques/promotions text)
+    # Heuristic keywords; check whole-word presence to reduce false positives.
+    nuke_patterns = [
+        r'\bnuclear missile\b',
+        r'\batomic bomb\b',
+        r'\bnuclear weapon\b',
+        r'\bnuke\b',
+        r'\bnuclear\b',
+        r'\batomic\b'
+    ]
+    is_nuke = False
+    for p in nuke_patterns:
+        if re.search(p, text):
+            is_nuke = True
+            break
 
     return {
         'city_attack_bonus': city_attack_bonus,
@@ -83,5 +97,6 @@ def parse_unit_modifiers(unit):
         'must_set_up': must_set_up,
         'self_destructs': self_destructs,
         'extra_attacks': extra_attacks,
-        'is_ranged_naval': is_ranged_naval
+        'is_ranged_naval': is_ranged_naval,
+        'is_nuke': is_nuke
     }
