@@ -1,19 +1,6 @@
-#    Unciv Force Rating Calculator is a Python script to calculate the base unit force of a unit in a mod for the game Unciv (https://github.com/yairm210/Unciv).
-#    Copyright (C) 2025 BobbyCobby.
-#
-#    This program is free software: you can redistribute it and/or modify
-#    it under the terms of the GNU Affero General Public License as published
-#    by the Free Software Foundation, either version 3 of the License, or
-#    (at your option) any later version.
-#
-#    This program is distributed in the hope that it will be useful,
-#    but WITHOUT ANY WARRANTY; without even the implied warranty of
-#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-#    GNU Affero General Public License for more details.
-#
-#    You should have received a copy of the GNU Affero General Public License
-#    along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
 def percent_to_decimal(percent):
-	decimal = float(percent / 100)
-	return decimal
+    """
+    Convert a percent (like 25 or -25) to decimal 0.25 or -0.25.
+    We don't assert bounds here because Unciv uniques may include negative or >100 values.
+    """
+    return float(percent) / 100.0

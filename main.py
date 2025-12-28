@@ -1,90 +1,108 @@
-#    Unciv Force Rating Calculator is a Python script to calculate the base unit force of a unit in a mod for the game Unciv (https://github.com/yairm210/Unciv).
-#    Copyright (C) 2025 BobbyCobby.
-#
-#    This program is free software: you can redistribute it and/or modify
-#    it under the terms of the GNU Affero General Public License as published
-#    by the Free Software Foundation, either version 3 of the License, or
-#    (at your option) any later version.
-#
-#    This program is distributed in the hope that it will be useful,
-#    but WITHOUT ANY WARRANTY; without even the implied warranty of
-#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-#    GNU Affero General Public License for more details.
-#
-#    You should have received a copy of the GNU Affero General Public License
-#    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#!/usr/bin/env python3
 
-from user_input import get_input_as_bool
+from user_input import get_input_as_bool, get_input_as_int, get_input_as_float
 from math_stuff import percent_to_decimal
 
-is_ranged = get_input_as_bool("Is the unit ranged? ")
+def compute_base_force(strength=None, ranged_strength=None, movement=2, is_nuke=False,
+                        is_ranged_naval=False, self_destructs=False,
+                        city_attack_bonus=0.0, attack_vs_bonus=0.0,
+                        attack_bonus=0.0, defend_bonus=0.0,
+                        paradrop_able=False, must_set_up=False, terrain_bonus=0.0,
+                        extra_attacks=0):
+    """
+    Compute Base Unit Force using corrected application of bonuses.
+    All percent arguments are in percent, e.g. city_attack_bonus=50 means +50%.
+    """
+    from math import pow
 
-if is_ranged:
-	strength = int(input("Ranged strength: "))
-	force = strength ** 1.45
-else:
-	strength = int(input("Strength: "))
-	force = strength ** 1.5
+    if ranged_strength is not None and ranged_strength > 0:
+        base = pow(ranged_strength, 1.45)
+    else:
+        base = pow(strength, 1.5)
 
-movement = int(input("Movement: "))
-force *= (movement ** 0.3)
+    base *= pow(movement, 0.3)
 
-is_nuke = get_input_as_bool("Is it a nuke? ")
+    if is_nuke:
+        base += 4000.0
 
-if is_nuke:
-	force += 4000
+    # Ranged naval halves the force
+    if is_ranged_naval:
+        base *= 0.5
 
-if is_ranged:
-	is_ranged_naval = get_input_as_bool("Is it a naval unit? ")
-	
-	if is_ranged_naval:
-		force *= 0.5
+    if self_destructs:
+        base *= 0.5
 
-self_destructs = get_input_as_bool("Does it self-destruct when attacking? ")
+    # Apply percentage modifiers as multipliers (1 + fraction)
+    if city_attack_bonus != 0:
+        base *= (1.0 + 0.5 * percent_to_decimal(city_attack_bonus))
 
-if self_destructs:
-	force *= 0.5
+    if attack_vs_bonus != 0:
+        base *= (1.0 + 0.25 * percent_to_decimal(attack_vs_bonus))
 
-city_attack_bonus = float(input("Percent bonus when attacking cities (0 if none): "))
+    if attack_bonus != 0:
+        base *= (1.0 + 0.5 * percent_to_decimal(attack_bonus))
 
-if city_attack_bonus != 0: #If city_attack_bonus were 0, adding half of it would make force zero
-	force *= percent_to_decimal(1.5 * city_attack_bonus)
+    if defend_bonus != 0:
+        base *= (1.0 + 0.5 * percent_to_decimal(defend_bonus))
 
-attack_vs_bonus = float(input("Bonus when attacking something that's not a city (0 if none): "))
+    if paradrop_able:
+        base *= 1.25
 
-if attack_vs_bonus != 0: #If attack_vs_bonus were 0, adding a quarter of it would make force zero
-	force *= percent_to_decimal(1.25 * attack_vs_bonus)
+    if must_set_up:
+        base *= 0.8
 
-attack_bonus = float(input("Bonus when attacking (0 if none): "))
+    if terrain_bonus != 0:
+        base *= (1.0 + 0.5 * percent_to_decimal(terrain_bonus))
 
-if attack_bonus != 0: #If attack_bonus were 0, adding half of it would make force zero
-	force *= percent_to_decimal(1.5 * attack_bonus)
+    if extra_attacks != 0:
+        # +20% per extra attack -> multiply by (1 + 0.2 * extra_attacks)
+        base *= (1.0 + 0.2 * extra_attacks)
 
-defend_bonus = float(input("Bonus when defending (0 if none): "))
+    return base
 
-if defend_bonus != 0: #If defend_bonus were 0, adding half of it would make force zero
-	force *= percent_to_decimal(1.5 * defend_bonus)
+def interactive_main():
+    is_ranged = get_input_as_bool("Is the unit ranged? ")
+    if is_ranged:
+        ranged_strength = get_input_as_int("Ranged strength: ")
+        strength = get_input_as_int("Melee strength (0 if none): ")
+    else:
+        strength = get_input_as_int("Strength: ")
+        ranged_strength = 0
 
-paradrop_able = get_input_as_bool("Can it paradrop? ")
+    movement = get_input_as_int("Movement: ")
+    is_nuke = get_input_as_bool("Is it a nuke? ")
+    is_ranged_naval = False
+    if is_ranged and get_input_as_bool("Is it naval (ranged naval)? "):
+        is_ranged_naval = True
 
-if paradrop_able:
-	force *= 1.25
+    self_destructs = get_input_as_bool("Does it self-destruct when attacking? ")
+    city_attack_bonus = get_input_as_float("Percent bonus when attacking cities (0 if none): ")
+    attack_vs_bonus = get_input_as_float("Bonus when attacking something that's not a city (0 if none): ")
+    attack_bonus = get_input_as_float("Bonus when attacking (0 if none): ")
+    defend_bonus = get_input_as_float("Bonus when defending (0 if none): ")
+    paradrop_able = get_input_as_bool("Can it paradrop? ")
+    must_set_up = get_input_as_bool("Does it need to Set Up to attack? ")
+    terrain_bonus = get_input_as_float("Bonus on a particular terrain (0 if none): ")
+    extra_attacks = get_input_as_int("Number of extra attacks per turn (0 if none): ")
 
-must_set_up = get_input_as_bool("Does it need to Set Up to attack? ")
+    force = compute_base_force(strength=strength,
+                               ranged_strength=ranged_strength,
+                               movement=movement,
+                               is_nuke=is_nuke,
+                               is_ranged_naval=is_ranged_naval,
+                               self_destructs=self_destructs,
+                               city_attack_bonus=city_attack_bonus,
+                               attack_vs_bonus=attack_vs_bonus,
+                               attack_bonus=attack_bonus,
+                               defend_bonus=defend_bonus,
+                               paradrop_able=paradrop_able,
+                               must_set_up=must_set_up,
+                               terrain_bonus=terrain_bonus,
+                               extra_attacks=extra_attacks)
 
-if must_set_up:
-	force *= 0.8
+    print("\n*************************\n")
+    print("Base Unit Force: {:.2f}".format(force))
+    print("\n*************************\n")
 
-terrain_bonus = float(input("Bonus on a particular terrain (0 if none): "))
-
-if terrain_bonus != 0: #If terrain_bonus were 0, adding half of it would make force zero
-	force *= percent_to_decimal(1.5 * terrain_bonus)
-
-extra_attacks = int(input("Number of extra attacks per turn (0 if none): "))
-
-if extra_attacks != 0: #If extra_attacks were 0, adding two-tenths of it would make force zero
-	force *= (1 + (0.2 * extra_attacks)_
-
-print("\n*************************\n")
-print("Base Unit Force: " + str(force))
-print("\n*************************\n")
+if __name__ == "__main__":
+    interactive_main()
