@@ -35,7 +35,7 @@ if is_nuke:
 	force += 4000
 
 if is_ranged:
-	is_ranged_naval = get_input_as_bool("Is it a naval unit?")
+	is_ranged_naval = get_input_as_bool("Is it a naval unit? ")
 	
 	if is_ranged_naval:
 		force *= 0.5
