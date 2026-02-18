@@ -15,8 +15,8 @@
 #    You should have received a copy of the GNU Affero General Public License
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from user_input import get_input_as_bool
 from math_stuff import percent_to_decimal
+from user_input import get_input_as_bool
 
 is_ranged = get_input_as_bool("Is the unit ranged? ")
 
