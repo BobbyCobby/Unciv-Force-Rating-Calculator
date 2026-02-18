@@ -1,4 +1,5 @@
-#    Unciv Force Rating Calculator is a Python script to calculate the base unit force of a unit in a mod for the game Unciv (https://github.com/yairm210/Unciv).
+#    Unciv Force Rating Calculator is a Python script to calculate the base unit force of a unit in
+#    a mod for the game Unciv (https://github.com/yairm210/Unciv).
 #    Copyright (C) 2025 BobbyCobby.
 #
 #    This program is free software: you can redistribute it and/or modify
