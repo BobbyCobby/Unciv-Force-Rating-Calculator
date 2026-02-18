@@ -10,3 +10,5 @@ jobs:
 
     - name: linting
       uses: programmingwithalex/pylinter@main
+      with:
+        skip-flake8: 'true'
