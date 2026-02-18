@@ -12,3 +12,16 @@ jobs:
       uses: programmingwithalex/pylinter@main
       with:
         skip-flake8: 'true'
+        fail-on-isort: 'false'
+
+    - name: commit isort changes
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add -A && git diff-index --cached --quiet HEAD || git commit -m 'isort'
+
+    - name: push isort changes
+      uses: ad-m/github-push-action@master
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        branch: ${{ github.ref }}
