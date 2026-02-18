@@ -1,4 +1,5 @@
-#    Unciv Force Rating Calculator is a Python script to calculate the base unit force of a unit in a mod for the game Unciv (https://github.com/yairm210/Unciv).
+#    Unciv Force Rating Calculator is a Python script to calculate the base unit force
+#    of a unit in a mod for the game Unciv (https://github.com/yairm210/Unciv).
 #    Copyright (C) 2025 BobbyCobby.
 #
 #    This program is free software: you can redistribute it and/or modify
@@ -146,8 +147,10 @@ def find_force_bounds(force: float) -> str:
       - "Higher than any G&K unit" if force > max standard force.
 
     Behavior notes:
-      - If force is exactly equal to a standard unit's force, the function returns the unit below (or the unit itself when it's the minimum)
-        and the next unit above (or the unit itself when it's the maximum) so the output remains in "Between X and Y" form.
+      - If force is exactly equal to a standard unit's force, the function returns the unit below
+        (or the unit itself when it's the minimum)
+        and the next unit above (or the unit itself when it's the maximum)
+        so the output remains in "Between X and Y" form.
     """
     if force < _FORCES[0]:
         return "Lower than any G&K unit"
