@@ -16,4 +16,4 @@
 
 def percent_to_decimal(percent):
 	decimal = float(percent / 100)
-	return decimal
+	return 1 + decimal
